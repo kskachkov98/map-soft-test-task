@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+
+if [ -z "${POSTGRES_USER}" ]; then
+  # Если переменные не заданы, берем дефолты для проверки
+  POSTGRES_USER="postgres"
+fi
+
+timeout=${WAIT_POSTGRES_TIMEOUT:-300}
+
+export DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+export PYTHONUNBUFFERED=1
+# 1. Функция ожидания доступности базы данных PostgreSQL (Healthcheck)
+postgres_ready() {
+  python << END
+import asyncio
+import sys
+import asyncpg
+
+try:
+    # Пытаемся подключиться к БД напрямую через установленный драйвер
+    asyncio.run(
+      asyncpg.connect(
+        database="${POSTGRES_DB}",
+        user="${POSTGRES_USER}",
+        password="${POSTGRES_PASSWORD}",
+        host="${POSTGRES_HOST}",
+        port=${POSTGRES_PORT},
+    )
+  )
+except (asyncpg.PostgresError, OSError, ValueError) as e:
+    print(f"Ошибка подключения: {e}", file=sys.stderr)
+    sys.exit(-1)
+sys.exit(0)
+END
+}
+
+echo "Waiting for PostgreSQL to become available..."
+until postgres_ready; do
+  >&2 echo "PostgreSQL is unavailable - sleeping"
+  timeout=$((timeout-1))
+  if [ $timeout -eq 0 ]; then
+    >&2 echo 'PostgreSQL is NOT available'
+    exit 1
+  fi
+  sleep 1
+done
+echo "PostgreSQL is up and running!"
+
+
+# 2. Создание схемы БД и наполнение данными
+# Поскольку в финальном образе мы установили все зависимости глобально через wheels,
+# мы можем вызывать python напрямую (без poetry run).
+echo "==> [Entrypoint] Инициализация схемы БД..."
+python -m scripts.init_db
+
+echo "==> [Entrypoint] Наполнение базы данных из JSON..."
+python -m scripts.seed_db
+
+
+# 3. Передаем управление следующей команде (/start)
+exec "$@"

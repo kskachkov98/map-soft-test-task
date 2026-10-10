@@ -1,0 +1,35 @@
+services:
+  backend:
+    restart: always
+    build:
+      context: .
+      dockerfile: ./compose/Dockerfile
+    ports:
+      - "8000:8000"
+    links:
+      - postgres:postgres
+    depends_on:
+      - postgres
+    env_file: ./.envs/.env
+    volumes:
+      - ./src:/app
+      - ./compose/entrypoint:/entrypoint
+      - ./compose/start:/start
+    expose:
+      - 8000
+    command: /start
+
+  postgres:
+    restart: always
+    image: postgres:10.4-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    env_file:
+      - .envs/.env
+    ports:
+      - "5432:5432"
+    expose:
+      - 5432
+
+volumes:
+  pgdata:
